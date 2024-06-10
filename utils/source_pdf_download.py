@@ -19,5 +19,3 @@ if not os.path.exists(pdf_path):
         print(f"Failed to download the PDF with status code: {response.status_code}")
 else:
     print(f"File {pdf_path} exists.")
-
-
