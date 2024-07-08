@@ -3,6 +3,8 @@ import torch
 import numpy as np
 import pandas as pd
 from sentence_transformers import util, SentenceTransformer
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers.utils import is_flash_attn_2_available
 from time import perf_counter as timer
 import textwrap
 
@@ -58,6 +60,9 @@ def print_top_results_and_scores(query: str,
         print(f"Page number: {pages_and_chunks[index]['page_number']}")
         print("\n")
 
+def get_model_num_params(model: torch.nn.Module):
+    return sum([param.numel() for param in model.parameters()])
+
 # query = "macronutrients functions"
 # print(f"Query: {query}")
 # query_embedding = embedding_model.encode(query, convert_to_tensor=True)
@@ -81,4 +86,46 @@ print("scores: ", scores)
 print("indices: ", indices)
 
 print_top_results_and_scores(query=query, embeddings=embeddings)
+print("Search part done.")
+print("\n")
+
+gpu_memory_bytes = torch.cuda.get_device_properties(0).total_memory
+gpu_memory_gb = round(gpu_memory_bytes / (2**30))
+print(f"Available GPU memory: {gpu_memory_gb} GB")
+
+if gpu_memory_gb < 5.1:
+    print(f"Available GPU memory is {gpu_memory_gb} GB. It may not be possible to run a Gemma LLM locally without quantization.")
+elif gpu_memory_gb < 8.1:
+    print(f"GPU memory: {gpu_memory_gb} | Recommended model: Gemma 2B in 4-bit precision.")
+    use_quantization_config = True
+    model_id = "google/gemma-2b-it"
+elif gpu_memory_gb < 19.0:
+    print(f"GPU memory: {gpu_memory_gb} | Recommended model: Gemma 2B in float16 or Gemma 7B in a 4-bit precision.")
+    use_quantization_config = False
+    model_id = "google/gemma-7b-it"
+elif gpu_memory_gb > 19.0:
+    print(f"GPU memory: {gpu_memory_gb} | Recommended model: Gemma 7B in 4-bit or float16 precision.")
+    use_quantization_config = False
+    model_id= "google/gemma-7b-it"
+
+print(f"use quantization set to: {use_quantization_config}")
+print(f"model_id set to: {model_id}")
+
+if (is_flash_attn_2_available()) and (torch.cuda.get_device_capability(0)[0] >= 8):
+    attn_implementation = "flash_attention_2"
+else:
+    attn_implementation = "sdpa"
+print(f"[INFO] Using attention implementation: {attn_implementation}")
+
+tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path = model_id)
+llm_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path = model_id,
+                                                torch_dtype = torch.float16,
+                                                quantization_config = quantization_config if use_quantization_config else None,
+                                                low_cpu_mem_usage = False,
+                                                attn_implementation = attn_implementation)
+if not use_quantization_config:
+    llm_model.to("cuda")                             
+print("llm_model: ", llm_model)
+print("Total model parameters: ", get_model_num_params(llm_model))
+
 
